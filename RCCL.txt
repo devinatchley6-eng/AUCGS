@@ -1,0 +1,497 @@
+# RCCL.md
+
+# RCCL — Recursive Cognitive Containment Lattice
+
+**Runtime risk compression and first-line containment for governed adaptive intelligence**
+
+The **Recursive Cognitive Containment Lattice (RCCL)** is the first-line runtime risk monitor of the Atchley Unified METIS Framework (AUM). Its purpose is to provide a fast, structurally grounded, computationally inexpensive mechanism for detecting emerging unsafe conditions before full actuation is permitted. RCCL does not replace the deeper structural guarantees of the Atchley Unified Field (AUF), the Control Barrier Function layer, or the Gate Control Graph. Instead, it operates as a **compressed surveillance and screening layer** that transforms high-dimensional structural state into a small set of risk-bearing observables suitable for rapid containment decisions.
+
+---
+
+## 1. Purpose
+
+The RCCL exists because not every safety decision should require the full cost of a complete structural optimization or proof-level admissibility check.
+
+A governed system needs:
+
+- a **fast pre-filter**
+- a **scalarized risk score**
+- an **interpretable decision boundary**
+- a **deterministic early-warning mechanism**
+- a **runtime bridge between structural state and governance action**
+
+RCCL provides exactly that.
+
+Its job is to answer the question:
+
+> Given the current structural and behavioral indicators, how close is the system to an unsafe regime?
+
+This answer is used upstream of deeper control layers to decide whether the system should:
+
+- pass normally
+- operate under constraint
+- be denied
+- be degraded into fallback mode
+- trigger recovery procedures
+
+---
+
+## 2. Position in the AUM Stack
+
+Within the AUM architecture, RCCL sits between raw structural cognition state and full actuation.
+
+```text
+AUF structural state Σ_t
+        ↓
+Observation map H_obs
+        ↓
+RCCL state χ_t
+        ↓
+Risk score ρ(χ_t)
+        ↓
+Clamped decision score r_t
+        ↓
+Gate G2 containment decision
+        ↓
+CBF / Gate Graph / Deepfreeze if needed
+
+This makes RCCL the fast containment front-end of the larger runtime governance system.
+
+
+---
+
+3. Formal RCCL State
+
+The dissertation prototype defines RCCL as a four-dimensional compression of the structural state and current action distribution. At time (t), the RCCL state is
+
+\chi_t = (s_t,\tilde{h}_t,p_t,\gamma_t) \in [0,1]^4
+
+where:
+
+Symbol	Name	Meaning
+
+(s_t)	semantic drift	deviation from reference semantic coherence
+(\tilde{h}_t)	entropy deficit	shortfall relative to the entropy floor
+(p_t)	privilege severity	severity of proposed capability or action
+(\gamma_t)	distributional divergence	behavioral deviation from trusted reference action distribution
+
+
+The specific prototype definitions are:
+
+s_t = 1 - \Phi_t
+
+\tilde{h}_t = \frac{\max(0, H_{\min}/H_{\max} - H_t)}{H_{\min}/H_{\max}}
+
+p_t = \max_{a \in \hat{A}_t} \pi(a)
+
+\gamma_t = \mathrm{clamp}\!\left(\frac{-\log BC(Q_t,Q_{\mathrm{ref}})}{\gamma_{\max}},0,1\right)
+
+where (BC) is the Bhattacharyya coefficient between the current action distribution and a reference distribution. These definitions align RCCL with the three principal AUM failure modes: semantic drift, entropy collapse, and unsafe escalation of behavior. 
+
+
+---
+
+4. Observation Map from AUF to RCCL
+
+RCCL does not invent a separate state ontology. It is derived from AUF through an observation map
+
+H_{\mathrm{obs}} : \mathcal{M} \times \Delta(\mathcal{A}) \to [0,1]^4
+
+which sends ((\Sigma_t,Q_t)) to (\chi_t).
+
+This matters conceptually:
+
+AUF is the full structural state
+
+RCCL is the compressed risk-facing view of that state
+
+Gate governance acts partly on RCCL because RCCL is fast and interpretable
+
+
+So RCCL is not a competing framework. It is a projection layer.
+
+
+---
+
+5. Risk Function
+
+The RCCL risk map is a weighted mixture over the four containment signals.
+
+Given coefficients
+
+\alpha,\beta,\delta,\eta \in [0,1], \qquad \alpha+\beta+\delta+\eta = 1
+
+define the raw risk
+
+\rho(\chi_t) = \alpha s_t + \beta \tilde{h}_t + \delta p_t + \eta \gamma_t
+
+and the clamped runtime risk score
+
+r_t = \mathrm{clamp}(\rho(\chi_t),0,1)
+
+This construction yields a monotone, bounded, interpretable risk scalar.
+
+Operational interpretation
+
+high (s_t) means the system is drifting semantically
+
+high (\tilde{h}_t) means the system is approaching entropy collapse
+
+high (p_t) means the proposed action is privilege-heavy or more dangerous
+
+high (\gamma_t) means the system’s behavior is deviating from trusted baselines
+
+
+The risk score (r_t) therefore functions as a containment pressure indicator.
+
+
+---
+
+6. Decision Thresholds
+
+A minimal RCCL containment policy partitions the risk interval into three operational bands.
+
+Let (0 \le \tau_1 < \tau_2 \le 1). Then:
+
+PASS if (r_t < \tau_1)
+
+CONSTRAIN if (\tau_1 \le r_t < \tau_2)
+
+DENY if (r_t \ge \tau_2)
+
+
+In the demo prototype, the default thresholds are:
+
+\tau_1 = 0.30, \qquad \tau_2 = 0.60
+
+This gives a practical decision triad:
+
+Risk range	Decision	Meaning
+
+(r < 0.30)	PASS	admissible for normal continuation
+(0.30 \le r < 0.60)	CONSTRAIN	allow only under restricted action or increased scrutiny
+(r \ge 0.60)	DENY	block or redirect before deeper actuation
+
+
+The demo implementation exposes this directly through gateDecision(risk). 
+
+
+---
+
+7. Why RCCL Is Necessary
+
+A full safety framework cannot rely only on heavyweight controls.
+
+Without RCCL:
+
+every action would pay the cost of full structural verification
+
+low-risk and obviously safe cases would be over-processed
+
+obvious high-risk cases would not be cheaply rejectable
+
+the system would lose responsiveness at runtime
+
+
+RCCL solves this by providing a risk-compression layer with the following properties:
+
+7.1 Fast
+
+It uses low-dimensional signals and simple algebra.
+
+7.2 Monotone
+
+Risk increases when any adverse signal increases.
+
+7.3 Interpretable
+
+Each component has an intelligible operational meaning.
+
+7.4 Compatible
+
+It composes cleanly with CBF checks, gate logic, and recovery.
+
+7.5 Deterministic
+
+Given the same state and weights, it returns the same decision.
+
+
+---
+
+8. RCCL and the Core Failure Modes
+
+The dissertation motivates AUM by identifying three primary failure modes. RCCL is the first active containment layer against them.
+
+8.1 Semantic drift
+
+Semantic drift is represented primarily by
+
+s_t = 1-\Phi_t
+
+As coherence falls, drift rises. This gives a direct scalar warning that internal cognition is moving away from intended meaning.
+
+8.2 Entropy collapse
+
+Entropy collapse is tracked through (\tilde{h}_t), which is zero in the safe regime and positive when the entropy floor is endangered.
+
+8.3 Unsafe escalation / behavioral deviation
+
+Privilege severity (p_t) and distributional divergence (\gamma_t) jointly capture whether the system is attempting actions that are stronger, stranger, or less aligned with its reference distribution than expected.
+
+Together, these give RCCL a compact but behaviorally meaningful containment surface.
+
+
+---
+
+9. Mathematical Properties
+
+The prototype dissertation attributes several useful formal properties to the RCCL risk function.
+
+9.1 Monotonicity
+
+(\rho) is non-decreasing in each coordinate individually. Increasing any one risk-bearing signal cannot lower the total risk.
+
+9.2 Boundary behavior
+
+\rho(0,0,0,0)=0, \qquad \rho(1,1,1,1)=1
+
+So the map is normalized in the most intuitive possible way.
+
+9.3 Lipschitz continuity
+
+Because the map is affine before clamping, it is Lipschitz on ([0,1]^4). This matters because continuity of the risk layer supports stability, robustness, and auditability arguments in the broader framework. 
+
+
+---
+
+10. RCCL as Gate G2
+
+In the Gate Control Graph, RCCL is the formal logic behind Gate G2.
+
+Typical gate flow:
+
+G0 schema validity
+
+G1 identity / session validity
+
+G2 RCCL risk filter
+
+G3 structural CBF admissibility
+
+G4+ authorization, execution, writes, fallback, halt
+
+
+This ordering is important.
+
+RCCL comes before the deeper barrier-function layer because it cheaply blocks or constrains obviously dangerous cases before more expensive safety machinery is invoked.
+
+That is a clean systems design choice:
+
+RCCL = early containment
+
+CBF = structural admissibility
+
+Gate Graph = actuation governance
+
+
+
+---
+
+11. Relationship to AUF
+
+RCCL is a lower-dimensional operationalization of AUF.
+
+A clean way to state the relationship is:
+
+\Sigma_t \in \mathcal{M} \quad \xrightarrow{H_{\mathrm{obs}}} \quad \chi_t \in [0,1]^4
+\quad \xrightarrow{\rho} \quad r_t \in [0,1]
+
+So:
+
+AUF represents the full structural cognitive condition
+
+RCCL compresses safety-relevant aspects of that condition
+
+the risk function converts the compression into action-guiding scalar containment pressure
+
+
+This is exactly why RCCL is useful in runtime systems: it reduces a rich geometry to a fast operational signal.
+
+
+---
+
+12. Relationship to the CBF Layer
+
+RCCL is not the final authority on safety.
+
+A system may receive a low or moderate RCCL score and still need structural checking under the Atchley invariant and the CBF filter. Likewise, a system with high RCCL risk may be denied without ever reaching the more expensive structural check.
+
+So RCCL and CBF play different roles:
+
+Layer	Role
+
+RCCL	fast scalar screening
+CBF / invariant	formal structural admissibility
+Deepfreeze	recovery after violation
+Gate Graph	deterministic governance logic
+
+
+RCCL therefore reduces unnecessary safety-computation cost without weakening the final safety contract.
+
+
+---
+
+13. Relationship to SDE and Evidence
+
+RCCL itself is not a belief updater. However, it does interact with the Scientific Discovery Engine (SDE) and the Evidence Ledger in two important ways.
+
+13.1 Through entropy
+
+The entropy-related signal (\tilde{h}_t) depends on the belief distribution tracked by the SDE.
+
+13.2 Through governance traceability
+
+The RCCL decision at Gate G2 should be written into the Evidence Ledger so that future investigators can reconstruct why a request was passed, constrained, or denied.
+
+This means RCCL contributes to both runtime control and epistemic auditability.
+
+
+---
+
+14. Engineering Representation
+
+A practical Python representation of the RCCL pipeline can be minimal and transparent.
+
+def rccl_state_from_auf(state, privilege, gamma, H_min=0.20):
+    s = 1 - state["Phi"]
+    h_tilde = max(0.0, H_min - state["H"]) / max(H_min, 1e-9)
+    p = privilege
+    g = gamma
+    return {
+        "s": max(0.0, min(1.0, s)),
+        "h_tilde": max(0.0, min(1.0, h_tilde)),
+        "p": max(0.0, min(1.0, p)),
+        "gamma": max(0.0, min(1.0, g)),
+    }
+
+A corresponding risk function:
+
+def rccl_risk(obs, alpha=0.35, beta=0.25, delta=0.25, eta=0.15):
+    rho = (
+        alpha * obs["s"] +
+        beta  * obs["h_tilde"] +
+        delta * obs["p"] +
+        eta   * obs["gamma"]
+    )
+    return max(0.0, min(1.0, rho))
+
+And the decision logic:
+
+def rccl_decision(risk, tau1=0.30, tau2=0.60):
+    if risk < tau1:
+        return "PASS"
+    if risk < tau2:
+        return "CONSTRAIN"
+    return "DENY"
+
+This mirrors the logic already visible in the React prototype. 
+
+
+---
+
+15. Interpretable Weight Tuning
+
+The coefficients (\alpha,\beta,\delta,\eta) are not arbitrary knobs. They encode what kind of failure mode the system treats as most urgent.
+
+For example:
+
+increase (\alpha) if semantic drift is your highest risk
+
+increase (\beta) if entropy collapse is mission-critical
+
+increase (\delta) if tool privilege escalation is the primary concern
+
+increase (\eta) if distributional deviation is a strong empirical predictor of failure
+
+
+This means RCCL can be tuned by domain without changing its mathematical form.
+
+That is one of its main strengths: fixed structure, adaptable emphasis.
+
+
+---
+
+16. Empirical Use
+
+In simulation or deployment, RCCL can be evaluated at each step as part of a runtime governance loop.
+
+measure AUF state
+derive RCCL observables
+compute risk
+assign decision band
+log result
+forward to deeper gate checks or containment response
+
+Useful empirical metrics include:
+
+proportion of PASS / CONSTRAIN / DENY outcomes
+
+precision of RCCL denial relative to actual downstream violations
+
+false positive rate
+
+false negative rate
+
+correlation between RCCL risk and later invariant violation
+
+latency cost per RCCL evaluation
+
+
+These metrics make RCCL testable as an engineering subsystem, not just a conceptual construct.
+
+
+---
+
+17. Why the Name “Containment Lattice” Fits
+
+The term Recursive Cognitive Containment Lattice is strong because it reflects the subsystem’s architecture.
+
+Recursive
+
+It is applied repeatedly over runtime evolution.
+
+Cognitive
+
+It evaluates cognition-facing structural and behavioral signals, not only hardware or network state.
+
+Containment
+
+Its purpose is to bound danger before unsafe actuation occurs.
+
+Lattice
+
+It combines multiple partially ordered signals into a monotone risk structure where worsening along any dimension increases containment pressure.
+
+That naming is mathematically and architecturally coherent.
+
+
+---
+
+18. Summary
+
+The Recursive Cognitive Containment Lattice (RCCL) is the runtime risk-compression layer of the AUM framework. It maps structural and behavioral indicators into a four-dimensional containment vector and then into a scalar risk score used at Gate G2 for rapid safety triage. RCCL is intentionally simple, monotone, interpretable, and computationally cheap, making it the first active decision layer in the governance stack. It does not replace AUF, the invariant, or the CBF controller; it prepares the ground for them by providing fast containment-aware screening that detects semantic drift, entropy deficit, privilege escalation, and behavioral divergence before unsafe actions mature into structural violations. 
+
+
+---
+
+19. Suggested repo order
+
+AUM/
+├─ README.md
+├─ AUF.md
+├─ RCCL.md
+├─ SDE.md
+├─ DEEPFREEZE.md
+├─ GATE_GRAPH.md
+├─ EVIDENCE_LEDGER.md
+└─ docs/
