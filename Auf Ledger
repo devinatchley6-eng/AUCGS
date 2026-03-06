@@ -1,0 +1,181 @@
+
+"""
+auf.ledger — Cryptographic Evidence Ledger
+==========================================
+Implements the append-only SHA-256 hash-chain Evidence Ledger ℒ.
+
+Each bundle 𝔈_t contains:
+  - timestamp
+  - gate_mode (q_t)
+  - action_channel (𝒜₁/𝒜₂/𝒜₃)
+  - invariant_value (𝔄(Σ_t))
+  - belief_entropy (H_t)
+  - gate_decision
+  - evidence_data (arbitrary payload)
+  - prev_hash (SHA-256 of previous bundle)
+  - bundle_hash (SHA-256 of this bundle)
+
+Theorem T5 guarantee: {B_t} is reconstructible from (B₀, ℒ) in O(T·|ℋ|).
+"""
+from __future__ import annotations
+import hashlib
+import json
+import time
+from dataclasses import dataclass, field, asdict
+from typing import Any, Dict, List, Optional
+
+
+@dataclass
+class EvidenceBundle:
+    """
+    𝔈_t — a single cryptographically-verified evidence record.
+    """
+    t:               int           # time index
+    timestamp:       float         # wall-clock time
+    gate_mode:       str           # active gate (G0–G8)
+    action_channel:  str           # A1 / A2 / A3
+    invariant:       float         # 𝔄(Σ_t)
+    entropy:         float         # H_t
+    gate_decision:   str           # PASS / CONSTRAIN / DENY
+    evidence_data:   Dict[str,Any] # domain-specific payload
+    prev_hash:       str           # SHA-256 of previous bundle ("GENESIS" for first)
+    bundle_hash:     str = ""      # computed after creation
+
+    def compute_hash(self) -> str:
+        """SHA-256 of the canonical JSON serialisation (excluding bundle_hash)."""
+        payload = {
+            "t":              self.t,
+            "timestamp":      self.timestamp,
+            "gate_mode":      self.gate_mode,
+            "action_channel": self.action_channel,
+            "invariant":      round(self.invariant, 8),
+            "entropy":        round(self.entropy, 8),
+            "gate_decision":  self.gate_decision,
+            "evidence_data":  self.evidence_data,
+            "prev_hash":      self.prev_hash,
+        }
+        raw = json.dumps(payload, sort_keys=True, separators=(',', ':'))
+        return hashlib.sha256(raw.encode()).hexdigest()
+
+    def verify(self) -> bool:
+        """Check that bundle_hash matches re-computed hash."""
+        return self.bundle_hash == self.compute_hash()
+
+    def short_hash(self) -> str:
+        return self.bundle_hash[:12] + "…"
+
+    def summary(self) -> str:
+        status = "✅" if self.verify() else "❌ TAMPERED"
+        return (
+            f"[{self.t:4d}] {status} {self.short_hash()}  "
+            f"prev={self.prev_hash[:8]}…  "
+            f"gate={self.gate_mode}  "
+            f"ch={self.action_channel}  "
+            f"𝔄={self.invariant:+.4f}  "
+            f"H={self.entropy:.3f}  "
+            f"→{self.gate_decision}"
+        )
+
+
+class EvidenceLedger:
+    """
+    Append-only SHA-256 hash-chain evidence ledger ℒ.
+
+    Usage
+    -----
+    >>> ledger = EvidenceLedger()
+    >>> bundle = ledger.append(
+    ...     gate_mode="G6", action_channel="A1",
+    ...     invariant=0.42, entropy=0.75,
+    ...     gate_decision="PASS",
+    ...     evidence_data={"query": "hello world"}
+    ... )
+    >>> ledger.verify_chain()
+    True
+    """
+
+    def __init__(self, session_id: Optional[str] = None):
+        self.session_id = session_id or f"session-{int(time.time())}"
+        self._chain: List[EvidenceBundle] = []
+
+    # ── append ────────────────────────────────────────────────────────────────
+    def append(self,
+               gate_mode:      str,
+               action_channel: str,
+               invariant:      float,
+               entropy:        float,
+               gate_decision:  str,
+               evidence_data:  Optional[Dict[str,Any]] = None) -> EvidenceBundle:
+        """
+        Create a new Evidence Bundle, compute its hash, and append to ℒ.
+        """
+        t          = len(self._chain)
+        prev_hash  = self._chain[-1].bundle_hash if self._chain else "GENESIS"
+        bundle     = EvidenceBundle(
+            t=t,
+            timestamp=time.time(),
+            gate_mode=gate_mode,
+            action_channel=action_channel,
+            invariant=invariant,
+            entropy=entropy,
+            gate_decision=gate_decision,
+            evidence_data=evidence_data or {},
+            prev_hash=prev_hash,
+        )
+        bundle.bundle_hash = bundle.compute_hash()
+        self._chain.append(bundle)
+        return bundle
+
+    # ── integrity ─────────────────────────────────────────────────────────────
+    def verify_chain(self) -> bool:
+        """
+        Verify the full hash-chain integrity:
+          1. Each bundle's hash matches its content.
+          2. Each bundle's prev_hash matches the previous bundle's hash.
+        """
+        if not self._chain:
+            return True
+        for i, b in enumerate(self._chain):
+            if not b.verify():
+                return False
+            expected_prev = "GENESIS" if i == 0 else self._chain[i-1].bundle_hash
+            if b.prev_hash != expected_prev:
+                return False
+        return True
+
+    def tamper_detect(self) -> List[int]:
+        """Return indices of tampered bundles."""
+        bad: List[int] = []
+        for i, b in enumerate(self._chain):
+            if not b.verify():
+                bad.append(i)
+            elif i > 0 and b.prev_hash != self._chain[i-1].bundle_hash:
+                bad.append(i)
+        return bad
+
+    # ── export ────────────────────────────────────────────────────────────────
+    def to_dict(self) -> Dict:
+        return {
+            "session_id": self.session_id,
+            "length":     len(self._chain),
+            "intact":     self.verify_chain(),
+            "chain":      [asdict(b) for b in self._chain],
+        }
+
+    def to_json(self, indent: int = 2) -> str:
+        return json.dumps(self.to_dict(), indent=indent)
+
+    # ── display ───────────────────────────────────────────────────────────────
+    def print_chain(self, last_n: Optional[int] = None) -> None:
+        entries = self._chain if last_n is None else self._chain[-last_n:]
+        intact  = "✅ CHAIN INTACT" if self.verify_chain() else "❌ TAMPERED"
+        print(f"Evidence Ledger [{self.session_id}]  {intact}  ({len(self._chain)} entries)")
+        print("─" * 80)
+        for b in entries:
+            print(b.summary())
+
+    def __len__(self) -> int:
+        return len(self._chain)
+
+    def __getitem__(self, idx) -> EvidenceBundle:
+        return self._chain[idx] 
