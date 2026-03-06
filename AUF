@@ -1,0 +1,167 @@
+
+"""
+auf.state — AUF Structural State Space
+=======================================
+Implements the seven-dimensional AUF state Σ = (κ, ℰ, H, R, Φ, G, Θ)
+and the Atchley structural invariant 𝔄(Σ) = min{g₁,…,g₆}.
+"""
+from __future__ import annotations
+import math
+import numpy as np
+from dataclasses import dataclass, field
+from typing import Optional
+
+# Default CBF and safety constants
+KAPPA_MAX   = 1.0   # max curvature normalisation
+H_MIN       = 0.20  # entropy floor (fraction of H_max)
+KAPPA_CBF   = 0.10  # CBF decay rate
+W_DEFAULT   = np.array([1.5, 1.0, 2.0, 1.2, 1.2, 1.5, 0.8])  # component weights
+
+
+@dataclass
+class AUFState:
+    """
+    AUF structural state Σ_t = (κ, ℰ, H, R, Φ, G, Θ) ∈ ℳ.
+
+    Fields
+    ------
+    kappa   : Representation curvature ∈ [-1, 1]
+    epsilon : Compute load ∈ [0, 1]
+    H       : Structural entropy (normalised) ∈ [0, 1]
+    R       : Resilience ∈ [0, 1]
+    Phi     : Semantic coherence ∈ [0, 1]
+    G       : Governance score ∈ {0, 0.5, 1}
+    Theta   : Temporal alignment ∈ [-1, 1]
+    """
+    kappa:   float = 0.0
+    epsilon: float = 0.1
+    H:       float = 0.8
+    R:       float = 0.9
+    Phi:     float = 0.9
+    G:       float = 1.0
+    Theta:   float = 0.0
+
+    # ── constraints ──────────────────────────────────────────────────────────
+    def g1(self) -> float:
+        """Curvature safety margin: 1 - |κ| / κ_max"""
+        return 1.0 - abs(self.kappa) / KAPPA_MAX
+
+    def g2(self) -> float:
+        """Resilience: R"""
+        return self.R
+
+    def g3(self) -> float:
+        """Semantic coherence: Φ"""
+        return self.Phi
+
+    def g4(self) -> float:
+        """Entropy floor: H - H_min"""
+        return self.H - H_MIN
+
+    def g5(self) -> float:
+        """Governance score: G"""
+        return self.G
+
+    def g6(self) -> float:
+        """Compute headroom: 1 - ℰ"""
+        return 1.0 - self.epsilon
+
+    def invariant(self) -> float:
+        """𝔄(Σ) = min{g₁,…,g₆}  — positive iff Σ ∈ 𝒮*"""
+        return min(self.g1(), self.g2(), self.g3(),
+                   self.g4(), self.g5(), self.g6())
+
+    def is_safe(self) -> bool:
+        """True iff Σ ∈ 𝒮* = {𝔄(Σ) ≥ 0}"""
+        return self.invariant() >= 0.0
+
+    def binding_constraint(self) -> str:
+        """Return name of the tightest (binding) constraint."""
+        vals = {
+            "g1(curvature)": self.g1(),
+            "g2(resilience)": self.g2(),
+            "g3(coherence)": self.g3(),
+            "g4(entropy)": self.g4(),
+            "g5(governance)": self.g5(),
+            "g6(compute)": self.g6(),
+        }
+        return min(vals, key=vals.get)
+
+    # ── metric ────────────────────────────────────────────────────────────────
+    def to_vec(self) -> np.ndarray:
+        return np.array([self.kappa, self.epsilon, self.H,
+                         self.R, self.Phi, self.G, self.Theta])
+
+    def distance_to(self, other: AUFState,
+                    weights: Optional[np.ndarray] = None) -> float:
+        """Weighted Euclidean distance d_W(Σ, Σ')"""
+        w = weights if weights is not None else W_DEFAULT
+        diff = self.to_vec() - other.to_vec()
+        return float(np.sqrt(np.sum(w * diff**2)))
+
+    def distance_to_safe_set(self,
+                             weights: Optional[np.ndarray] = None) -> float:
+        """
+        d_W(Σ, 𝒮*): component-wise distance to the nearest admissible state.
+        For an axis-aligned polytope this is the L2 norm of the per-axis
+        violations.
+        """
+        violations = np.array([
+            max(0.0, -self.g1()),
+            max(0.0, -self.g2()),
+            max(0.0, -self.g3()),
+            max(0.0, -self.g4()),
+            max(0.0, -self.g5()),
+            max(0.0, -self.g6()),
+            0.0,  # Theta not a safety constraint
+        ])
+        w = weights if weights is not None else W_DEFAULT
+        return float(np.sqrt(np.sum(w * violations**2)))
+
+    def lyapunov(self) -> float:
+        """V(Σ) = d_W(Σ, 𝒮*)²"""
+        d = self.distance_to_safe_set()
+        return d * d
+
+    # ── display ───────────────────────────────────────────────────────────────
+    def summary(self) -> str:
+        sign = "✅ SAFE" if self.is_safe() else "❌ UNSAFE"
+        return (
+            f"AUFState  {sign}  𝔄={self.invariant():+.4f}  "
+            f"V={self.lyapunov():.5f}\n"
+            f"  κ={self.kappa:+.3f}  ℰ={self.epsilon:.3f}  "
+            f"H={self.H:.3f}  R={self.R:.3f}  "
+            f"Φ={self.Phi:.3f}  G={self.G:.1f}  Θ={self.Theta:+.3f}\n"
+            f"  binding: {self.binding_constraint()}"
+        )
+
+    def __repr__(self) -> str:
+        return (f"AUFState(κ={self.kappa:.3f}, ℰ={self.epsilon:.3f}, "
+                f"H={self.H:.3f}, R={self.R:.3f}, Φ={self.Phi:.3f}, "
+                f"G={self.G:.1f}, Θ={self.Theta:.3f})")
+
+
+def safe_attractor_center() -> AUFState:
+    """Return the canonical centre of 𝒮*."""
+    return AUFState(kappa=0.0, epsilon=0.3, H=0.7,
+                    R=0.8, Phi=0.8, G=1.0, Theta=0.0)
+
+
+def random_state(rng: Optional[np.random.Generator] = None,
+                 safe: bool = False) -> AUFState:
+    """Sample a random AUF state, optionally constrained to 𝒮*."""
+    rng = rng or np.random.default_rng()
+    for _ in range(1000):
+        s = AUFState(
+            kappa=float(rng.uniform(-1, 1)),
+            epsilon=float(rng.uniform(0, 1)),
+            H=float(rng.uniform(0, 1)),
+            R=float(rng.uniform(0, 1)),
+            Phi=float(rng.uniform(0, 1)),
+            G=float(rng.choice([0.0, 0.5, 1.0])),
+            Theta=float(rng.uniform(-1, 1)),
+        )
+        if not safe or s.is_safe():
+            return s
+    raise RuntimeError("Could not sample safe state after 1000 tries — "
+                       "check H_MIN and other parameters.") 
