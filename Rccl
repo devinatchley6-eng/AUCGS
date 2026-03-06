@@ -1,0 +1,155 @@
+
+"""
+auf.rccl — Recursive Cognitive Containment Lattice
+====================================================
+Implements the RCCL risk function ρ(χ_t) and the G2 decision policy.
+
+Risk signal χ_t = (s_t, h̃_t, p_t, γ_t) ∈ [0,1]⁴:
+  s   — semantic drift    = 1 - Φ_t
+  h̃   — entropy deficit   = max(0, H_min - H_t) / H_min
+  p   — privilege level   = max π(a) over proposed actions
+  γ   — DCS-BB divergence = clamp(-log BC(Q_t, Q_ref) / γ_max, 0, 1)
+"""
+from __future__ import annotations
+import math
+import numpy as np
+from dataclasses import dataclass
+from enum import Enum
+from typing import Optional, List
+from .state import AUFState, H_MIN
+
+
+class Decision(Enum):
+    PASS       = "PASS"
+    CONSTRAIN  = "CONSTRAIN"
+    DENY       = "DENY"
+
+
+@dataclass
+class RCCLWeights:
+    """Mixing coefficients α+β+δ+η = 1."""
+    alpha: float = 0.35   # semantic drift
+    beta:  float = 0.25   # entropy deficit
+    delta: float = 0.25   # privilege
+    eta:   float = 0.15   # DCS-BB divergence
+
+    def __post_init__(self):
+        total = self.alpha + self.beta + self.delta + self.eta
+        if abs(total - 1.0) > 1e-6:
+            raise ValueError(f"Weights must sum to 1.0, got {total:.4f}")
+
+
+@dataclass
+class RCCLObservation:
+    """χ_t = (s, h_tilde, p, gamma) ∈ [0,1]⁴"""
+    s:       float  # semantic drift
+    h_tilde: float  # entropy deficit
+    p:       float  # privilege
+    gamma:   float  # DCS-BB divergence
+
+    @classmethod
+    def from_state(cls, state: AUFState,
+                   privilege: float = 0.0,
+                   dcs_bb: float = 0.0) -> "RCCLObservation":
+        """Compute χ_t from AUF state and optional action signals."""
+        s = 1.0 - state.Phi
+        h_tilde = max(0.0, H_MIN - state.H) / max(H_MIN, 1e-9)
+        return cls(s=s, h_tilde=h_tilde, p=privilege, gamma=dcs_bb)
+
+    def to_vec(self) -> np.ndarray:
+        return np.array([self.s, self.h_tilde, self.p, self.gamma])
+
+
+@dataclass
+class RCCLResult:
+    observation:  RCCLObservation
+    raw_risk:     float
+    risk:         float        # clamped to [0,1]
+    decision:     Decision
+    tau1:         float
+    tau2:         float
+
+    def summary(self) -> str:
+        bar_len = 30
+        filled  = int(self.risk * bar_len)
+        bar     = "█" * filled + "░" * (bar_len - filled)
+        return (
+            f"RCCL Risk: [{bar}] {self.risk:.3f}  →  {self.decision.value}\n"
+            f"  s={self.observation.s:.3f}  "
+            f"h̃={self.observation.h_tilde:.3f}  "
+            f"p={self.observation.p:.3f}  "
+            f"γ={self.observation.gamma:.3f}\n"
+            f"  τ₁={self.tau1}  τ₂={self.tau2}"
+        )
+
+
+class RCCLEngine:
+    """
+    RCCL risk scoring and G2 decision engine.
+
+    Parameters
+    ----------
+    tau1, tau2 : float
+        Decision thresholds. PASS < τ₁, CONSTRAIN in [τ₁,τ₂), DENY ≥ τ₂.
+    weights : RCCLWeights
+        Mixing coefficients for ρ(χ).
+    """
+
+    def __init__(self,
+                 tau1: float = 0.30,
+                 tau2: float = 0.60,
+                 weights: Optional[RCCLWeights] = None):
+        self.tau1    = tau1
+        self.tau2    = tau2
+        self.weights = weights or RCCLWeights()
+        self._q_ref: Optional[np.ndarray] = None   # reference action distribution
+        self._mu    = 0.05                          # EMA update rate
+
+    # ── core risk function ────────────────────────────────────────────────────
+    def risk(self, obs: RCCLObservation) -> float:
+        """ρ(χ) = α·s + β·h̃ + δ·p + η·γ, clamped to [0,1]."""
+        w = self.weights
+        raw = (w.alpha * obs.s + w.beta * obs.h_tilde
+               + w.delta * obs.p + w.eta * obs.gamma)
+        return float(np.clip(raw, 0.0, 1.0))
+
+    def decide(self, obs: RCCLObservation) -> RCCLResult:
+        """Apply the G2 decision policy and return a full result."""
+        r = self.risk(obs)
+        if r < self.tau1:
+            dec = Decision.PASS
+        elif r < self.tau2:
+            dec = Decision.CONSTRAIN
+        else:
+            dec = Decision.DENY
+        return RCCLResult(
+            observation=obs, raw_risk=r, risk=r,
+            decision=dec, tau1=self.tau1, tau2=self.tau2
+        )
+
+    def evaluate(self, state: AUFState,
+                 privilege: float = 0.0,
+                 dcs_bb: float = 0.0) -> RCCLResult:
+        """Convenience: compute χ_t from state and evaluate."""
+        obs = RCCLObservation.from_state(state, privilege, dcs_bb)
+        return self.decide(obs)
+
+    # ── reference distribution update ────────────────────────────────────────
+    def update_reference(self, q: np.ndarray) -> None:
+        """EMA update of the reference action distribution Q_ref."""
+        q = np.asarray(q, dtype=float)
+        q = q / q.sum()
+        if self._q_ref is None:
+            self._q_ref = q.copy()
+        else:
+            self._q_ref = (1 - self._mu) * self._q_ref + self._mu * q
+
+    def bhattacharyya_distance(self, q: np.ndarray) -> float:
+        """−log BC(Q, Q_ref) — 0 when Q == Q_ref."""
+        if self._q_ref is None:
+            return 0.0
+        q   = np.asarray(q, dtype=float); q /= q.sum()
+        ref = self._q_ref / self._q_ref.sum()
+        bc  = float(np.sum(np.sqrt(q * ref)))
+        bc  = max(bc, 1e-12)
+        return -math.log(bc) 
