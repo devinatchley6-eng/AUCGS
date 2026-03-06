@@ -1,0 +1,256 @@
+
+"""
+auf.sde — Scientific Discovery Engine (Bayesian Belief Updater)
+===============================================================
+Implements the five-stage SDE reasoning cycle:
+  Stage 1: Observation
+  Stage 2: Hypothesis scoring
+  Stage 3: Experiment design (max information gain)
+  Stage 4: Evidence bundle creation
+  Stage 5: Evidence-gated Bayesian belief update (T5 guarantee)
+
+Entropy floor enforced by A8: H(B_t) ≥ H_min at all times.
+"""
+from __future__ import annotations
+import math
+import numpy as np
+from dataclasses import dataclass, field
+from typing import Callable, Dict, List, Optional, Tuple
+
+# Entropy floor from A8
+H_MIN_ABSOLUTE = 0.20   # fraction of H_max
+
+# ── types ─────────────────────────────────────────────────────────────────────
+Hypothesis = str
+Observation = Dict
+
+LikelihoodFn = Callable[[Observation, Hypothesis], float]  # L(D|h)
+
+
+@dataclass
+class BeliefState:
+    """
+    B_t ∈ Δ(ℋ): probability distribution over hypothesis space ℋ.
+
+    Maintains H_min enforcement (Axiom A8) via Laplace smoothing.
+    """
+    hypotheses:   List[Hypothesis]
+    probs:        np.ndarray
+
+    def __post_init__(self):
+        self.probs = np.asarray(self.probs, dtype=float)
+        self._enforce_floor()
+
+    def _enforce_floor(self) -> None:
+        """Axiom A8: ensure H(B) ≥ H_min by Laplace smoothing if needed."""
+        self.probs = np.clip(self.probs, 1e-12, None)
+        self.probs /= self.probs.sum()
+        n = len(self.hypotheses)
+        if n < 2:
+            return
+        h_max = math.log(n)
+        h_min = H_MIN_ABSOLUTE * h_max
+        if self.entropy() < h_min:
+            lam       = 1e-3
+            uniform   = np.ones(n) / n
+            for _ in range(1000):
+                mixed = (1 - lam) * self.probs + lam * uniform
+                mixed /= mixed.sum()
+                if _entropy(mixed) >= h_min:
+                    self.probs = mixed
+                    return
+                lam = min(lam * 1.5, 1.0)
+
+    # ── information measures ─────────────────────────────────────────────────
+    def entropy(self) -> float:
+        """H(B_t) = -Σ p log p"""
+        return _entropy(self.probs)
+
+    def entropy_normalised(self) -> float:
+        """H_t = H(B_t) / H_max ∈ [0,1]"""
+        n = len(self.hypotheses)
+        if n < 2:
+            return 0.0
+        return self.entropy() / math.log(n)
+
+    def kl_from_uniform(self) -> float:
+        """D_KL(B ‖ U) = log|ℋ| - H(B)"""
+        return math.log(len(self.hypotheses)) - self.entropy()
+
+    def top_k(self, k: int = 3) -> List[Tuple[Hypothesis, float]]:
+        """Return top-k hypotheses by probability."""
+        idx = np.argsort(self.probs)[::-1][:k]
+        return [(self.hypotheses[i], float(self.probs[i])) for i in idx]
+
+    def map_hypothesis(self) -> Tuple[Hypothesis, float]:
+        """Maximum a posteriori hypothesis."""
+        i = int(np.argmax(self.probs))
+        return self.hypotheses[i], float(self.probs[i])
+
+    # ── display ───────────────────────────────────────────────────────────────
+    def summary(self, top: int = 5) -> str:
+        lines = [f"BeliefState  H={self.entropy():.4f}  "
+                 f"H_n={self.entropy_normalised():.3f}  "
+                 f"|ℋ|={len(self.hypotheses)}"]
+        for h, p in self.top_k(top):
+            bar = "█" * int(p * 30)
+            lines.append(f"  {h:30s}  {p:.4f}  {bar}")
+        return "\n".join(lines)
+
+
+def _entropy(p: np.ndarray) -> float:
+    p = p[p > 0]
+    return float(-np.sum(p * np.log(p)))
+
+
+# ── SDE Engine ────────────────────────────────────────────────────────────────
+
+@dataclass
+class SDEUpdate:
+    """Record of a single evidence-gated belief update."""
+    t:                int
+    observation:      Observation
+    info_gain:        float        # I_t = H(B_t) - H(B_{t+1})
+    entropy_before:   float
+    entropy_after:    float
+    gate_passed:      bool         # E(𝔈_t) = 1
+    map_before:       Tuple[Hypothesis, float]
+    map_after:        Tuple[Hypothesis, float]
+    bundle_hash:      str = ""
+
+
+class SDEEngine:
+    """
+    Scientific Discovery Engine: five-stage Bayesian reasoning cycle.
+
+    Example
+    -------
+    >>> hypotheses = ["model_A", "model_B", "model_C"]
+    >>> def likelihood(obs, h):
+    ...     return obs.get("scores", {}).get(h, 0.33)
+    >>>
+    >>> sde = SDEEngine(hypotheses, likelihood)
+    >>> sde.update({"scores": {"model_A": 0.9, "model_B": 0.07, "model_C": 0.03}})
+    >>> print(sde.belief.summary())
+    """
+
+    def __init__(self,
+                 hypotheses:  List[Hypothesis],
+                 likelihood:  LikelihoodFn,
+                 prior:       Optional[np.ndarray] = None):
+        n     = len(hypotheses)
+        prior = prior if prior is not None else np.ones(n) / n
+        self.belief    = BeliefState(hypotheses=hypotheses, probs=prior.copy())
+        self.likelihood = likelihood
+        self.history:  List[SDEUpdate] = []
+        self._t        = 0
+        self._budget_used = 0.0
+        self._budget_cap  = _entropy(prior)   # H(B₀) — total budget
+
+    # ── Stage 2: score hypotheses ─────────────────────────────────────────────
+    def score(self, obs: Observation) -> Dict[Hypothesis, float]:
+        """L(D|h) for each h ∈ ℋ."""
+        return {h: self.likelihood(obs, h) for h in self.belief.hypotheses}
+
+    # ── Stage 3: experiment design ────────────────────────────────────────────
+    def expected_info_gain(self, candidates: List[Observation]) -> List[float]:
+        """
+        For each candidate experiment, estimate expected information gain
+        E_D[H(B) - H(T_D(B))].
+        """
+        gains: List[float] = []
+        for obs in candidates:
+            scores = np.array([self.likelihood(obs, h)
+                               for h in self.belief.hypotheses])
+            # marginal P(D) = Σ B(h) L(D|h)
+            p_d = float(np.dot(self.belief.probs, scores))
+            if p_d < 1e-12:
+                gains.append(0.0)
+                continue
+            posterior = self.belief.probs * scores / p_d
+            posterior = np.clip(posterior, 1e-12, None)
+            posterior /= posterior.sum()
+            gain = self.belief.entropy() - _entropy(posterior)
+            gains.append(max(0.0, gain))
+        return gains
+
+    # ── Stage 5: evidence-gated Bayesian update ───────────────────────────────
+    def update(self,
+               obs: Observation,
+               evidence_verified: bool = True,
+               bundle_hash: str = "") -> Optional[SDEUpdate]:
+        """
+        Apply one Bayesian update cycle (Stages 1–5).
+
+        Parameters
+        ----------
+        obs : Observation
+            Observed data (passed to likelihood function).
+        evidence_verified : bool
+            E(𝔈_t) = 1 — gate G7 must have verified the evidence bundle.
+            If False, the update is blocked (T5 guarantee).
+
+        Returns
+        -------
+        SDEUpdate record, or None if update was blocked.
+        """
+        map_before      = self.belief.map_hypothesis()
+        entropy_before  = self.belief.entropy()
+
+        if not evidence_verified:
+            return SDEUpdate(
+                t=self._t, observation=obs,
+                info_gain=0.0,
+                entropy_before=entropy_before,
+                entropy_after=entropy_before,
+                gate_passed=False,
+                map_before=map_before,
+                map_after=map_before,
+                bundle_hash=bundle_hash,
+            )
+
+        # Bayesian update T_D(B)
+        scores   = np.array([self.likelihood(obs, h)
+                              for h in self.belief.hypotheses], dtype=float)
+        scores   = np.clip(scores, 1e-12, None)
+        new_probs = self.belief.probs * scores
+        new_probs /= new_probs.sum()
+
+        new_belief = BeliefState(
+            hypotheses=self.belief.hypotheses, probs=new_probs)
+
+        info_gain = entropy_before - new_belief.entropy()
+        info_gain = max(0.0, info_gain)
+
+        self._budget_used += info_gain
+        self.belief        = new_belief
+        self._t           += 1
+
+        rec = SDEUpdate(
+            t=self._t,
+            observation=obs,
+            info_gain=info_gain,
+            entropy_before=entropy_before,
+            entropy_after=new_belief.entropy(),
+            gate_passed=True,
+            map_before=map_before,
+            map_after=new_belief.map_hypothesis(),
+            bundle_hash=bundle_hash,
+        )
+        self.history.append(rec)
+        return rec
+
+    # ── budget stats ──────────────────────────────────────────────────────────
+    @property
+    def budget_used(self) -> float:
+        return self._budget_used
+
+    @property
+    def budget_remaining(self) -> float:
+        return max(0.0, self._budget_cap - self._budget_used)
+
+    @property
+    def budget_fraction(self) -> float:
+        if self._budget_cap < 1e-12:
+            return 1.0
+        return self._budget_used / self._budget_cap 
