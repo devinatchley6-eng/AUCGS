@@ -1,0 +1,432 @@
+AUF.md
+
+AUF — Atchley Unified Field
+
+Structural cognition state space for governed adaptive intelligence
+
+The Atchley Unified Field (AUF) is the core structural state representation of the Atchley Unified METIS Framework (AUM). It provides the formal space in which adaptive cognition is modeled, measured, constrained, and stabilized. Rather than treating intelligence as a sequence of outputs alone, AUF represents the system as a point evolving through a compact metric state space whose coordinates encode the geometry, coherence, entropy, resilience, governance condition, computational burden, and temporal alignment of reasoning. This makes safety a property of the system’s internal structural dynamics, not merely a post hoc judgment on external behavior.
+
+
+---
+
+1. Purpose
+
+AUF exists to solve a fundamental problem in AI safety:
+
+Behavioral outputs are too late to be the first line of control.
+
+A system can remain behaviorally plausible while internally drifting toward instability, collapse, incoherence, or unsafe action selection. AUF addresses this by defining a state geometry of cognition in which safety-relevant structural properties are explicitly measurable and governable.
+
+The AUF enables:
+
+structural monitoring of cognition
+
+metric-based safety certification
+
+Lyapunov and barrier-function analysis
+
+runtime intervention and recovery
+
+cross-module coordination with RCCL, SDE, Deepfreeze, and the Gate Graph
+
+
+
+---
+
+2. Formal State Definition
+
+At time , the AUF structural state is
+
+\Sigma_t = (\kappa_t,\mathcal{E}_t,H_t,R_t,\Phi_t,G_t,\Theta_t)
+
+with components:
+
+Symbol	Name	Domain	Meaning
+
+	Representation curvature		geometric turning of the embedding trajectory
+	Compute load		normalized runtime / inference burden
+	Structural entropy		normalized entropy of the active belief / representational distribution
+	Resilience		alignment of current dynamics with stable reference dynamics
+	Semantic coherence		consistency of current representation with reference meaning
+	Governance score		most recent admissibility / gate condition
+	Temporal alignment		co-motion time deviation or temporal phase mismatch
+
+
+The state space is defined as
+
+\mathcal{M} = [-1,1] \times [0,1]^5 \times [-1,1] \subset \mathbb{R}^7
+
+equipped with weighted metric
+
+d_W(\Sigma,\Sigma') = \left(\sum_{i=1}^{7} w_i(\Sigma_i-\Sigma_i')^2\right)^{1/2}
+
+where  has strictly positive weights.
+
+Because  is closed and bounded in finite-dimensional Euclidean space, it is compact and complete. That matters because compactness gives you existence of extrema, continuity control, projection properties, and convergence guarantees used later by the invariant, Lyapunov, and Deepfreeze machinery. 
+
+
+---
+
+3. Interpretation of the Seven Fields
+
+3.1 Curvature 
+
+ captures how sharply the internal representational trajectory is turning. High-magnitude curvature indicates abrupt changes in semantic direction, topic shifts, adversarial perturbation, or unstable regime transition. In the dissertation prototype, curvature is described using a normalized Menger-curvature style construction on consecutive embedding centroids. This makes it a structural signal of representational instability rather than a superficial text-level feature. 
+
+Operationally:
+
+low  suggests steady trajectory evolution
+
+high  suggests sharp representational turning
+
+sustained high curvature is treated as a precursor to drift or instability
+
+
+3.2 Compute Load 
+
+ measures normalized system burden. This variable captures the idea that safety is not independent of computational stress. Systems under excessive load can exhibit degraded responsiveness, unstable search behavior, brittle compression, or poor governance compliance.
+
+Operationally:
+
+low  means the system is operating within comfortable compute bounds
+
+high  means the system is near overload and therefore closer to unsafe operating conditions
+
+
+3.3 Structural Entropy 
+
+ is the normalized entropy of the active belief or representational distribution. It tracks diversity of admissible internal structure. Low entropy corresponds to collapse into brittle or degenerate cognitive states; high entropy corresponds to greater structural diversity.
+
+This variable anchors one of the central AUM principles: the entropy floor. The framework explicitly maintains a strictly positive lower bound , preventing collapse to overcompressed, unrecoverable, or dogmatic internal states. 
+
+3.4 Resilience 
+
+ measures recovery-oriented alignment of present system dynamics with a stable reference dynamic. In the dissertation, resilience is linked to cosine similarity of current and reference gradient directions. This turns resilience into a dynamical quantity rather than a vague descriptive label. 
+
+Operationally:
+
+high  means the system’s updates align with stabilizing directions
+
+low  means the system is moving in a way that weakens recoverability
+
+
+3.5 Semantic Coherence 
+
+ measures how semantically aligned the current internal representation remains relative to a reference or intended task manifold. It is a direct structural counterweight to semantic drift.
+
+Operationally:
+
+high  means strong continuity with intended semantics
+
+low  means increasing drift away from task-grounded meaning
+
+
+3.6 Governance Score 
+
+ encodes the latest governance state of the system. It reflects whether current reasoning and proposed action lie inside the allowable operational regime enforced by the gate system. In the demo code, governance behaves as a coarse value such as deny / constrain / pass; in the broader framework it functions as a structural coordinate coupling state evolution to runtime governance. 
+
+3.7 Temporal Alignment 
+
+ represents alignment with the co-motion temporal regulator. This variable tracks whether reasoning dynamics are evolving at the correct effective temporal scale relative to safety-preserving control. It couples AUF to your co-motion/time layer and makes temporal distortion a first-class structural safety signal rather than an afterthought.
+
+
+---
+
+4. Why AUF Matters
+
+The AUF is not just a data structure. It is the governing mathematical substrate for the rest of the framework.
+
+It provides the state on which the following operate:
+
+the Atchley structural invariant
+
+the RCCL compression and risk filter
+
+the CBF safety controller
+
+the Lyapunov stability function
+
+the Deepfreeze recovery operator
+
+the Gate Control Graph
+
+the Evidence Ledger
+
+
+Without AUF, the rest of the framework would be fragmented. AUF is the common state language that allows the entire system to be formally composable.
+
+
+---
+
+5. Safe Region and Structural Admissibility
+
+Safety in AUF is not defined behaviorally. It is defined geometrically.
+
+A scalar invariant
+
+\mathfrak{A} : \mathcal{M} \to \mathbb{R}
+
+defines the safe structural region
+
+\mathcal{S}^* = \{\Sigma \in \mathcal{M} : \mathfrak{A}(\Sigma) \ge 0\}
+
+The interpretation is direct:
+
+if , the current structural state is admissible
+
+if , the system has entered a structurally unsafe regime
+
+
+In the prototype demo, the invariant is implemented as the minimum of six component margins:
+
+\mathfrak{A}(\Sigma)
+=
+\min\{
+1-|\kappa|,
+R,
+\Phi,
+H-H_{\min},
+G,
+1-\mathcal{E}
+\}
+
+which means the worst current structural constraint defines admissibility. This is a strong engineering choice because it forces safety to be bottleneck-aware: one critical failure mode is enough to trigger governance response. 
+
+
+---
+
+6. AUF as a Metric Safety Space
+
+The weighted metric  is not decorative. It gives the framework a quantitative way to express:
+
+distance between cognitive states
+
+distance to the safe set
+
+stability decay
+
+convergence under intervention
+
+sensitivity of the system to structural perturbation
+
+
+The natural Lyapunov function is
+
+V(\Sigma)=d_W(\Sigma,\mathcal{S}^*)^2
+
+This quantity is zero exactly on the safe set and positive outside it. Because it measures squared distance to structural admissibility, it has a clean operational meaning: how far the system is from safety.
+
+The dissertation prototype explicitly ties this function to geometric convergence under the safety filter and Deepfreeze operator. 
+
+
+---
+
+7. AUF and the Failure Modes
+
+The dissertation identifies three central failure modes:
+
+1. semantic drift
+
+
+2. entropy collapse
+
+
+3. unverifiable belief formation
+
+
+
+AUF directly addresses the first two and provides structural context for the third.
+
+Semantic drift
+
+This is tracked through  and indirectly through . A system can drift by losing semantic alignment or by abruptly changing trajectory geometry.
+
+Entropy collapse
+
+This is tracked directly through , with the entropy floor preventing total structural degeneration.
+
+Unverifiable belief formation
+
+This is not encoded by a single AUF coordinate, but AUF provides the structural context in which belief updates occur. The Evidence Ledger and SDE then attach epistemic accountability to those updates.
+
+
+---
+
+8. Relationship to RCCL
+
+RCCL is not a replacement for AUF. It is a compressed behavioral observation layer derived from AUF.
+
+The dissertation defines the RCCL observation vector as
+
+\chi_t = (s_t,\tilde{h}_t,p_t,\gamma_t)\in[0,1]^4
+
+with:
+
+ as semantic drift
+
+ as entropy deficit relative to the floor
+
+ as privilege severity
+
+ as distributional divergence from reference action behavior 
+
+
+So AUF is the full structural state, while RCCL is a fast lower-dimensional surveillance layer derived from it.
+
+
+---
+
+9. Relationship to Deepfreeze
+
+Deepfreeze acts on AUF states:
+
+\mathfrak{D} : \mathcal{M}\to\mathcal{M}
+
+Its purpose is to contract unsafe states toward . That only works because AUF gives a geometric space and metric in which “toward safety” is mathematically well-defined.
+
+In other words:
+
+AUF defines the geometry
+
+the invariant defines admissibility
+
+Deepfreeze defines the recovery map
+
+
+The dissertation’s convergence statement is of the form
+
+d_W(\mathfrak{D}^n(\Sigma_0),\mathcal{S}^*) \le c^n d_W(\Sigma_0,\mathcal{S}^*)
+\quad\text{for }0<c<1
+
+which is a contraction-toward-a-set result rather than a global fixed-point claim. 
+
+
+---
+
+10. Relationship to the Gate Graph
+
+The Gate Control Graph uses AUF as the structural truth source for runtime governance.
+
+Typical flow:
+
+AUF state is measured
+
+RCCL computes fast scalar risk from compressed signals
+
+the CBF layer checks whether proposed actuation preserves 
+
+the Gate Graph mediates pass, constrain, deny, degrade, or halt
+
+if needed, Deepfreeze restores admissibility
+
+
+This means AUF is the state substrate from which gate decisions derive formal legitimacy.
+
+
+---
+
+11. Design Principles of AUF
+
+The AUF is built around several design commitments.
+
+11.1 Compactness
+
+The state space is bounded and closed, enabling complete metric analysis and stable numerical governance.
+
+11.2 Structural measurability
+
+Each coordinate corresponds to a measurable safety-relevant structural property.
+
+11.3 Cross-module interoperability
+
+AUF is designed so that control theory, Bayesian updating, risk scoring, and cryptographic logging all speak through the same state representation.
+
+11.4 Safety as geometry
+
+Safety is encoded in the structure of state space rather than only in external rule enforcement.
+
+11.5 Recovery compatibility
+
+Unsafe states are not treated as terminal by default; they are states with positive distance from admissibility and are therefore reachable by recovery operators.
+
+
+---
+
+12. Minimal Engineering Representation
+
+A minimal implementation can represent AUF as:
+
+Sigma_t = {
+    "kappa": float,    # [-1,1]
+    "epsilon": float,  # [0,1]
+    "H": float,        # [0,1]
+    "R": float,        # [0,1]
+    "Phi": float,      # [0,1]
+    "G": float,        # [0,1]
+    "Theta": float     # [-1,1]
+}
+
+A prototype invariant function can be written as:
+
+def invariant(s, H_min=0.20):
+    g1 = 1 - abs(s["kappa"])
+    g2 = s["R"]
+    g3 = s["Phi"]
+    g4 = s["H"] - H_min
+    g5 = s["G"]
+    g6 = 1 - s["epsilon"]
+    return min(g1, g2, g3, g4, g5, g6)
+
+This mirrors the dissertation demo logic and gives the repo a transparent bridge between theory and implementation. 
+
+
+---
+
+13. Research Significance
+
+The AUF is one of the most original parts of the framework because it reframes AI safety as a state-space governance problem. That move is mathematically important.
+
+It allows you to import tools from:
+
+metric geometry
+
+stochastic control
+
+hybrid systems
+
+Lyapunov stability
+
+control barrier functions
+
+metastability theory
+
+information theory
+
+
+Most AI safety systems stop at output filtering or training-time alignment. AUF instead makes runtime structural cognition governable.
+
+That is the core scientific shift.
+
+
+---
+
+14. Summary
+
+The Atchley Unified Field is the formal structural cognition space underlying the AUM framework. It represents adaptive intelligence as a state in a compact metric geometry whose coordinates measure curvature, load, entropy, resilience, coherence, governance, and temporal alignment. By defining safety as membership in a structurally admissible region of this space, AUF makes it possible to prove forward invariance, stability, controlled recovery, and bounded exploration using rigorous mathematical tools. In the AUM architecture, AUF is the base layer from which all higher-order governance mechanisms derive their formal meaning. 
+
+
+---
+
+15. Suggested placement in repo
+
+AUM/
+├─ README.md
+├─ AUF.md
+├─ RCCL.md
+├─ DEEPFREEZE.md
+├─ GATE_GRAPH.md
+├─ SDE.md
+├─ EVIDENCE_LEDGER.md
+└─ docs/
+
+Devin earl atchley
